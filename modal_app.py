@@ -35,6 +35,7 @@ image = (
         "loguru>=0.7.0",
         "tqdm>=4.66.0",
         "pandas>=2.2.0",
+        "python-multipart>=0.0.6",
     )
     # Pre-download YOLO model into the image
     .run_commands("python -c \"from ultralytics import YOLO; YOLO('yolov8n.pt')\"")
@@ -548,8 +549,8 @@ def compute_stats(
     image=image,
     timeout=60,
     volumes={VOLUME_PATH: volume},
-    allow_concurrent_inputs=20,
 )
+@modal.concurrent(max_inputs=20)
 @modal.asgi_app()
 def web():
     """FastAPI web server."""
