@@ -31,7 +31,7 @@ except ImportError:
 class LLMShotEvent:
     """A shot event identified by the LLM."""
     frame_range: tuple[int, int]  # Start and end frame
-    shot_type: str  # dink, drive, drop, lob, volley, serve, return, overhead
+    shot_type: str  # dink, drive, drop, lob, volley, serve, return, overhead, erne, atp, reset, speedup, passing, poach
     player_position: str  # near_left, near_right, far_left, far_right
     outcome: str  # in, out, net, winner, error, returned
     confidence: str  # high, medium, low
@@ -61,7 +61,13 @@ ANALYSIS_PROMPT = """You are an expert pickleball analyst. You are watching a do
 Analyze the provided video frames and identify:
 
 1. **Shot Events**: For each shot, identify:
-   - shot_type: one of [serve, return, dink, drive, drop, lob, volley, overhead]
+   - shot_type: one of [serve, return, dink, drive, drop, lob, volley, overhead, erne, atp, reset, speedup, passing, poach]
+     - erne: player jumps/runs around the kitchen to volley at the net post (player outside sideline)
+     - atp: ball travels around the net post, not over it
+     - reset: soft defensive shot from mid-court/baseline to neutralize and get to kitchen
+     - speedup: sudden hard shot during a dink rally to catch opponent off guard (must follow 2+ dinks)
+     - passing: fast shot aimed to pass an opponent at the net, typically down the sideline
+     - poach: player crosses to partner's side to intercept a shot at the kitchen line
    - player_position: which player hit it [near_left, near_right, far_left, far_right]
      (near = closer to camera, far = further from camera)
    - outcome: [in, out, net, winner, error, returned]

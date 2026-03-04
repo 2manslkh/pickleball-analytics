@@ -134,6 +134,12 @@ export default function VideoPlayer({
     lob: "#06b6d4",
     volley: "#ec4899",
     overhead: "#f97316",
+    erne: "#a855f7",
+    atp: "#14b8a6",
+    reset: "#64748b",
+    speedup: "#dc2626",
+    passing: "#0ea5e9",
+    poach: "#d946ef",
   };
 
   return (

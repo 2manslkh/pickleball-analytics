@@ -10,6 +10,12 @@ export interface PlayerStats {
   overheads: number;
   serves: number;
   returns: number;
+  ernes: number;
+  atps: number;
+  resets: number;
+  speedups: number;
+  passing_shots: number;
+  poaches: number;
   dink_accuracy: number;
   third_shot_drop_attempts: number;
   third_shot_drop_success: number;

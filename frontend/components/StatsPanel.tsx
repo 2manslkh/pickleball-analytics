@@ -100,6 +100,12 @@ function PlayerCard({ player }: { player: PlayerStatsType }) {
         <ShotBar label="Volleys" count={player.volleys} total={totalShots} color="#ec4899" />
         <ShotBar label="Lobs" count={player.lobs} total={totalShots} color="#06b6d4" />
         <ShotBar label="Serves" count={player.serves} total={totalShots} color="#3b82f6" />
+        <ShotBar label="Ernes" count={player.ernes} total={totalShots} color="#a855f7" />
+        <ShotBar label="ATPs" count={player.atps} total={totalShots} color="#14b8a6" />
+        <ShotBar label="Resets" count={player.resets} total={totalShots} color="#64748b" />
+        <ShotBar label="Speedups" count={player.speedups} total={totalShots} color="#dc2626" />
+        <ShotBar label="Passing" count={player.passing_shots} total={totalShots} color="#0ea5e9" />
+        <ShotBar label="Poaches" count={player.poaches} total={totalShots} color="#d946ef" />
       </div>
 
       {/* Key metrics */}
@@ -207,6 +213,12 @@ export default function StatsPanel({ stats, currentTime }: StatsPanelProps) {
                 lob: "#06b6d4",
                 volley: "#ec4899",
                 overhead: "#f97316",
+                erne: "#a855f7",
+                atp: "#14b8a6",
+                reset: "#64748b",
+                speedup: "#dc2626",
+                passing: "#0ea5e9",
+                poach: "#d946ef",
               };
               const total = Object.values(stats.shot_distribution).reduce((a, b) => a + b, 0);
               return (

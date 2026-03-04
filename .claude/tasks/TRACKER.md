@@ -11,7 +11,7 @@ Read these before starting any task:
 ## Current Sprint: 1 — Core Analysis Quality
 
 ### Task 1.1: Expand Shot Types
-- **Status:** `ready`
+- **Status:** `done`
 - **Skill:** `.claude/skills/shot-classification/SKILL.md`
 - **Sprint:** `.claude/tasks/sprint-1.md`
 - **Files:** `src/analysis/shot_classifier.py`, `src/analysis/llm_classifier.py`, `src/analysis/stats.py`, `frontend/components/StatsPanel.tsx`, `frontend/components/VideoPlayer.tsx`

@@ -24,6 +24,12 @@ class PlayerStats(BaseModel):
     overheads: int = 0
     serves: int = 0
     returns: int = 0
+    ernes: int = 0
+    atps: int = 0
+    resets: int = 0
+    speedups: int = 0
+    passing_shots: int = 0
+    poaches: int = 0
 
     # Accuracy / effectiveness
     dink_accuracy: float = 0.0       # % dinks that landed in kitchen
@@ -174,6 +180,12 @@ class StatsAggregator:
         ps.overheads = type_counts.get(ShotType.OVERHEAD, 0)
         ps.serves = type_counts.get(ShotType.SERVE, 0)
         ps.returns = type_counts.get(ShotType.RETURN, 0)
+        ps.ernes = type_counts.get(ShotType.ERNE, 0)
+        ps.atps = type_counts.get(ShotType.ATP, 0)
+        ps.resets = type_counts.get(ShotType.RESET, 0)
+        ps.speedups = type_counts.get(ShotType.SPEEDUP, 0)
+        ps.passing_shots = type_counts.get(ShotType.PASSING, 0)
+        ps.poaches = type_counts.get(ShotType.POACH, 0)
 
         # Dink accuracy (dinks that landed in kitchen)
         dink_shots = [s for s in shots if s.shot_type == ShotType.DINK]

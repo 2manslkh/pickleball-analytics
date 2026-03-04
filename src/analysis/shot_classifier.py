@@ -15,10 +15,16 @@ class ShotType(str, Enum):
     RETURN = "return"
     DINK = "dink"
     DRIVE = "drive"
-    DROP = "drop"          # 3rd shot drop or reset
+    DROP = "drop"          # 3rd shot drop
     LOB = "lob"
     VOLLEY = "volley"
     OVERHEAD = "overhead"  # Smash/overhead
+    ERNE = "erne"          # Volley around the kitchen (player outside sideline)
+    ATP = "atp"            # Around the post shot
+    RESET = "reset"        # Soft defensive shot to neutralize and get to kitchen
+    SPEEDUP = "speedup"    # Sudden hard shot during a dink rally
+    PASSING = "passing"    # Fast shot aimed to pass opponent at the net
+    POACH = "poach"        # Player crosses to partner's side to intercept
     UNKNOWN = "unknown"
 
 
@@ -116,10 +122,16 @@ class ShotClassifier:
         court_pos = None
         zone = None
 
+        # Get player court position for advanced shot detection
+        player_court_pos = None
         if self.court_mapping:
             try:
                 court_pos = self.court_mapping.image_to_court(ball_pos)
                 zone = self.court_mapping.get_zone(court_pos)
+            except Exception:
+                pass
+            try:
+                player_court_pos = self.court_mapping.image_to_court(hitting_player_pos)
             except Exception:
                 pass
 
@@ -128,6 +140,7 @@ class ShotClassifier:
         # Classify based on context
         shot_type = self._classify_type(
             speed, vx, vy, zone, self.shot_count_in_rally, court_pos,
+            player_court_pos, hitting_player_id,
         )
 
         shot = self._make_shot(
@@ -149,6 +162,8 @@ class ShotClassifier:
         zone: str | None,
         shot_number: int,
         court_pos: tuple[float, float] | None,
+        player_court_pos: tuple[float, float] | None = None,
+        player_id: int | None = None,
     ) -> ShotType:
         """Determine shot type from physics and context."""
 
@@ -159,6 +174,40 @@ class ShotClassifier:
         # Shot 2 = return
         if shot_number == 2:
             return ShotType.RETURN
+
+        # --- Advanced shot types (check before basic ones) ---
+
+        # Erne: player outside sideline + near net + volley-like speed
+        if player_court_pos and court_pos:
+            px, py = player_court_pos
+            if (px < -1 or px > COURT_WIDTH + 1) and abs(py - NET_POSITION) < KITCHEN_DEPTH:
+                return ShotType.ERNE
+
+        # ATP: ball trajectory goes outside court bounds laterally
+        if court_pos:
+            bx, _ = court_pos
+            if (bx < -2 or bx > COURT_WIDTH + 2) and speed > self.DINK_MAX_SPEED:
+                return ShotType.ATP
+
+        # Poach: player crosses court midline (X=10ft) to intercept
+        if player_court_pos and zone and "kitchen" in zone:
+            px, _ = player_court_pos
+            court_midline = COURT_WIDTH / 2
+            # Check if player is on the opposite side of where they started
+            if player_id is not None:
+                # Simple heuristic: odd player IDs typically on left, even on right
+                # More robust detection would track each player's home side
+                expected_side = "left" if (player_id % 2 == 1) else "right"
+                if expected_side == "left" and px > court_midline + 2:
+                    return ShotType.POACH
+                elif expected_side == "right" and px < court_midline - 2:
+                    return ShotType.POACH
+
+        # Speedup: sudden fast shot after 2+ dinks in the rally
+        if speed >= self.DRIVE_MIN_SPEED and self._recent_dinks_count() >= 2:
+            return ShotType.SPEEDUP
+
+        # --- Standard shot types ---
 
         # Check for lob: strong upward component (negative vy in image coords)
         if vy < self.LOB_MIN_VERTICAL and speed > 6.0:
@@ -173,9 +222,22 @@ class ShotClassifier:
         if zone and "kitchen" in zone and speed <= self.DINK_MAX_SPEED:
             return ShotType.DINK
 
+        # High speed from baseline/transition aimed down sideline = passing shot
+        if speed >= self.DRIVE_MIN_SPEED and court_pos:
+            bx, _ = court_pos
+            near_sideline = bx < 3 or bx > COURT_WIDTH - 3
+            if near_sideline and zone and ("baseline" in zone or "transition" in zone):
+                return ShotType.PASSING
+
         # High speed = drive
         if speed >= self.DRIVE_MIN_SPEED:
             return ShotType.DRIVE
+
+        # Reset: medium speed from transition/baseline zone, landing in kitchen
+        # Differentiated from drop: reset happens after shot 3 (defensive context)
+        if zone and ("transition" in zone or "baseline" in zone) and speed < self.DRIVE_MIN_SPEED:
+            if shot_number > 3 and speed > self.DINK_MAX_SPEED:
+                return ShotType.RESET
 
         # Medium speed from transition zone toward kitchen = drop
         if zone and "transition" in zone and speed < self.DRIVE_MIN_SPEED:
@@ -193,6 +255,16 @@ class ShotClassifier:
         if speed < self.DINK_MAX_SPEED:
             return ShotType.DINK
         return ShotType.DRIVE
+
+    def _recent_dinks_count(self) -> int:
+        """Count consecutive dinks at the end of the current rally."""
+        count = 0
+        for shot in reversed(self._current_rally_shots):
+            if shot.shot_type == ShotType.DINK:
+                count += 1
+            else:
+                break
+        return count
 
     def new_rally(self):
         """Reset for a new rally/point."""
