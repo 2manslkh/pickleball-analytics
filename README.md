@@ -1,0 +1,69 @@
+# 🏓 Pickleball Match Analytics
+
+AI-powered video analysis for pickleball doubles matches. Upload a match video, get detailed stats on every player's performance.
+
+## What It Does
+
+- **Player Detection & Tracking** — Tracks all 4 players throughout the match using YOLO + ByteTrack
+- **Ball Tracking** — Detects and tracks the ball frame-by-frame
+- **Court Detection** — Maps the court lines for spatial analysis
+- **Shot Classification** — Identifies dinks, drives, drops, lobs, volleys, serves
+- **Match Stats** — Generates a comprehensive performance report
+
+## Stats Generated
+
+| Category | Metrics |
+|----------|---------|
+| **Shots** | Total shots, dinks, drives, drops, lobs, volleys, serves |
+| **Accuracy** | Dink accuracy, 3rd shot drop success rate, serve in % |
+| **Errors** | Unforced errors, forced errors, error types |
+| **Positioning** | Kitchen line time %, court coverage heat map |
+| **Rally** | Avg rally length, point-ending shot types |
+| **Strategy** | 3rd shot selection, transition success rate |
+
+## Tech Stack
+
+- **Detection:** YOLOv8 (players + ball)
+- **Tracking:** ByteTrack (multi-object tracking)
+- **Court:** OpenCV homography + line detection
+- **Classification:** Custom shot classifier
+- **Backend:** FastAPI
+- **Frontend:** Next.js
+- **Processing:** OpenCV + ffmpeg
+
+## Quick Start
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run analysis on a video
+python -m src.main analyze --video path/to/match.mp4
+
+# Start the API server
+python -m src.api.server
+
+# Start the frontend
+cd frontend && npm run dev
+```
+
+## Project Structure
+
+```
+src/
+├── detection/      # YOLO player + ball detection
+├── tracking/       # Multi-object tracking (ByteTrack)
+├── court/          # Court line detection + homography
+├── analysis/       # Shot classification + stats aggregation
+├── api/            # FastAPI backend
+main.py             # CLI entry point
+frontend/           # Next.js dashboard
+models/             # Trained model weights
+data/
+├── videos/         # Input match videos
+└── outputs/        # Analysis results
+```
+
+## License
+
+MIT

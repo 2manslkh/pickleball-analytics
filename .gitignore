@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# Models (large files)
+models/*.pt
+models/*.onnx
+!models/.gitkeep
+
+# Data
+data/videos/*
+data/outputs/*
+!data/videos/.gitkeep
+!data/outputs/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend)
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Env
+.env
+.env.local
