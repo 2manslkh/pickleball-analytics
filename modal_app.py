@@ -59,7 +59,7 @@ secrets = [modal.Secret.from_name("pickleball-secrets", required_keys=[])]
     volumes={VOLUME_PATH: volume},
     secrets=secrets,
 )
-def run_cv_pass(video_path: str, sample_rate: int = 2) -> dict:
+def run_cv_pass(video_path: str, sample_rate: int = 2, max_seconds: float = 0) -> dict:
     """Run CV detection + tracking on GPU. Returns tracking data as serializable dict."""
     import cv2
     import numpy as np
@@ -79,7 +79,13 @@ def run_cv_pass(video_path: str, sample_rate: int = 2) -> dict:
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    logger.info(f"CV Pass: {width}x{height} @ {fps:.1f}fps, {total_frames} frames")
+    # Cap frames if max_seconds set
+    if max_seconds > 0:
+        max_frames = int(max_seconds * fps)
+        total_frames = min(total_frames, max_frames)
+        logger.info(f"CV Pass: {width}x{height} @ {fps:.1f}fps, capped to {total_frames} frames ({max_seconds}s)")
+    else:
+        logger.info(f"CV Pass: {width}x{height} @ {fps:.1f}fps, {total_frames} frames")
 
     player_detector = PlayerDetector("yolov8n.pt", confidence=0.5)
     ball_detector = BallDetector("yolov8n.pt", confidence=0.3)
@@ -103,6 +109,9 @@ def run_cv_pass(video_path: str, sample_rate: int = 2) -> dict:
     while True:
         ret, frame = cap.read()
         if not ret:
+            break
+
+        if max_seconds > 0 and frame_idx >= total_frames:
             break
 
         if frame_idx % sample_rate == 0:
@@ -563,6 +572,7 @@ def web():
         url: str | None = None
         mode: str = "hybrid"  # "cv" or "hybrid"
         llm_provider: str = "gemini"
+        max_seconds: float = 0  # 0 = full video, >0 = cap at N seconds
 
     @api.post("/analyze")
     async def analyze_video(req: AnalyzeRequest):
@@ -576,7 +586,7 @@ def web():
             video_path = dl_result["path"]
 
             # Step 2: CV Pass (GPU)
-            cv_data = run_cv_pass.remote(video_path, sample_rate=2)
+            cv_data = run_cv_pass.remote(video_path, sample_rate=2, max_seconds=req.max_seconds)
 
             # Step 3: LLM Pass (parallel batches)
             llm_results = []
@@ -615,6 +625,7 @@ def web():
     async def analyze_upload(
         video: UploadFile = File(...),
         mode: str = "hybrid",
+        max_seconds: float = 0,
     ):
         """Upload a video file for analysis."""
         video_dir = Path(VIDEOS_DIR)
@@ -630,7 +641,7 @@ def web():
         volume.commit()
 
         # Run same pipeline
-        cv_data = run_cv_pass.remote(str(video_path), sample_rate=2)
+        cv_data = run_cv_pass.remote(str(video_path), sample_rate=2, max_seconds=max_seconds)
 
         llm_results = []
         if mode == "hybrid":
