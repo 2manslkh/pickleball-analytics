@@ -5,6 +5,7 @@ import VideoPlayer from "@/components/VideoPlayer";
 import StatsPanel from "@/components/StatsPanel";
 import UploadZone, { AnalysisMode } from "@/components/UploadZone";
 import { MatchStats, TimelineMarker } from "@/lib/types";
+import { analyzeYouTube, analyzeUpload } from "@/lib/api";
 
 // Demo data for testing UI without backend
 const DEMO_STATS: MatchStats = {
@@ -76,86 +77,46 @@ export default function Home() {
   const [currentTime, setCurrentTime] = useState(0);
   const [useDemo, setUseDemo] = useState(false);
 
-  const pollJob = useCallback(async (jobId: string) => {
-    const pollInterval = setInterval(async () => {
-      try {
-        const statusRes = await fetch(`/api/status/${jobId}`);
-        const status = await statusRes.json();
-
-        setProgress(status.progress);
-
-        // If YouTube download provides video URL, use it for playback
-        if (status.video_url && !videoUrl) {
-          setVideoUrl(status.video_url);
-        }
-
-        if (status.status === "complete") {
-          clearInterval(pollInterval);
-          const resultsRes = await fetch(`/api/results/${jobId}`);
-          const results = await resultsRes.json();
-          setStats(results);
-          setIsProcessing(false);
-        } else if (status.status === "error") {
-          clearInterval(pollInterval);
-          console.error("Analysis failed:", status.error);
-          setIsProcessing(false);
-        }
-      } catch (err) {
-        clearInterval(pollInterval);
-        console.error("Polling error:", err);
-        setStats(DEMO_STATS);
-        setIsProcessing(false);
-      }
-    }, 2000);
-  }, [videoUrl]);
-
   const handleUpload = useCallback(async (file: File, mode: AnalysisMode = "hybrid") => {
     setVideoFile(file);
     setVideoUrl(URL.createObjectURL(file));
     setIsProcessing(true);
-    setProgress(0);
+    setProgress(10);
 
     try {
-      const formData = new FormData();
-      formData.append("video", file);
-      formData.append("mode", mode);
-
-      const uploadRes = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!uploadRes.ok) throw new Error("Upload failed");
-      const { job_id } = await uploadRes.json();
-      pollJob(job_id);
+      setProgress(20);
+      const results = await analyzeUpload(file, { mode });
+      setProgress(100);
+      setStats(results);
     } catch (err) {
       console.error("Upload error:", err);
       setStats(DEMO_STATS);
+    } finally {
       setIsProcessing(false);
     }
-  }, [pollJob]);
+  }, []);
 
   const handleYouTubeSubmit = useCallback(async (url: string, mode: AnalysisMode = "hybrid") => {
     setIsProcessing(true);
-    setProgress(0);
-    setVideoUrl(null);
+    setProgress(5);
+    // Embed YouTube for playback
+    const videoId = url.match(/(?:v=|youtu\.be\/|shorts\/)([a-zA-Z0-9_-]{11})/)?.[1];
+    if (videoId) {
+      setVideoUrl(`https://www.youtube.com/embed/${videoId}`);
+    }
 
     try {
-      const res = await fetch("/api/youtube/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, mode }),
-      });
-
-      if (!res.ok) throw new Error("YouTube submission failed");
-      const { job_id } = await res.json();
-      pollJob(job_id);
+      setProgress(15);
+      const results = await analyzeYouTube(url, { mode });
+      setProgress(100);
+      setStats(results);
     } catch (err) {
       console.error("YouTube error:", err);
       setStats(DEMO_STATS);
+    } finally {
       setIsProcessing(false);
     }
-  }, [pollJob]);
+  }, []);
 
   const handleLoadDemo = useCallback(() => {
     setStats(DEMO_STATS);
@@ -270,7 +231,18 @@ export default function Home() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Video + Timeline (2/3 width) */}
           <div className="lg:col-span-2">
-            {videoUrl ? (
+            {videoUrl && videoUrl.includes("youtube.com/embed") ? (
+              <div className="space-y-3">
+                <div className="aspect-video rounded-xl overflow-hidden">
+                  <iframe
+                    src={videoUrl}
+                    className="w-full h-full"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+              </div>
+            ) : videoUrl ? (
               <VideoPlayer
                 videoUrl={videoUrl}
                 markers={markers}
