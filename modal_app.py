@@ -583,11 +583,11 @@ def web():
 
         try:
             # Step 1: Download
-            dl_result = download_video.remote(req.url)
+            dl_result = await download_video.remote.aio(req.url)
             video_path = dl_result["path"]
 
             # Step 2: CV Pass (GPU)
-            cv_data = run_cv_pass.remote(video_path, sample_rate=2, max_seconds=req.max_seconds)
+            cv_data = await run_cv_pass.remote.aio(video_path, sample_rate=2, max_seconds=req.max_seconds)
 
             # Step 3: LLM Pass (parallel batches)
             llm_results = []
@@ -609,13 +609,12 @@ def web():
                     )
 
                 # Collect results
-                llm_results = [f.get() for f in futures]
+                llm_results = [await f.get.aio() for f in futures]
 
             # Step 4: Compute stats
-            # Remove large frame data before sending to stats function
             cv_data_light = {k: v for k, v in cv_data.items()
                            if k not in ("llm_frames", "llm_annotations")}
-            result = compute_stats.remote(cv_data_light, llm_results, mode=req.mode)
+            result = await compute_stats.remote.aio(cv_data_light, llm_results, mode=req.mode)
 
             return result
 
@@ -642,7 +641,7 @@ def web():
         volume.commit()
 
         # Run same pipeline
-        cv_data = run_cv_pass.remote(str(video_path), sample_rate=2, max_seconds=max_seconds)
+        cv_data = await run_cv_pass.remote.aio(str(video_path), sample_rate=2, max_seconds=max_seconds)
 
         llm_results = []
         if mode == "hybrid":
@@ -657,11 +656,11 @@ def web():
                         indices[i:i + batch_size],
                     )
                 )
-            llm_results = [f.get() for f in futures]
+            llm_results = [await f.get.aio() for f in futures]
 
         cv_data_light = {k: v for k, v in cv_data.items()
                         if k not in ("llm_frames", "llm_annotations")}
-        result = compute_stats.remote(cv_data_light, llm_results, mode=mode)
+        result = await compute_stats.remote.aio(cv_data_light, llm_results, mode=mode)
 
         return result
 
