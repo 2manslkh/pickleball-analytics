@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo } from "react";
 import VideoPlayer from "@/components/VideoPlayer";
 import StatsPanel from "@/components/StatsPanel";
-import UploadZone from "@/components/UploadZone";
+import UploadZone, { AnalysisMode } from "@/components/UploadZone";
 import { MatchStats, TimelineMarker } from "@/lib/types";
 
 // Demo data for testing UI without backend
@@ -109,7 +109,7 @@ export default function Home() {
     }, 2000);
   }, [videoUrl]);
 
-  const handleUpload = useCallback(async (file: File) => {
+  const handleUpload = useCallback(async (file: File, mode: AnalysisMode = "hybrid") => {
     setVideoFile(file);
     setVideoUrl(URL.createObjectURL(file));
     setIsProcessing(true);
@@ -118,6 +118,7 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("video", file);
+      formData.append("mode", mode);
 
       const uploadRes = await fetch("/api/analyze", {
         method: "POST",
@@ -134,7 +135,7 @@ export default function Home() {
     }
   }, [pollJob]);
 
-  const handleYouTubeSubmit = useCallback(async (url: string) => {
+  const handleYouTubeSubmit = useCallback(async (url: string, mode: AnalysisMode = "hybrid") => {
     setIsProcessing(true);
     setProgress(0);
     setVideoUrl(null);
@@ -143,7 +144,7 @@ export default function Home() {
       const res = await fetch("/api/youtube/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, mode }),
       });
 
       if (!res.ok) throw new Error("YouTube submission failed");

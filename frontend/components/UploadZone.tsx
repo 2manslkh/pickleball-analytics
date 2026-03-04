@@ -2,9 +2,11 @@
 
 import { useState, useCallback } from "react";
 
+export type AnalysisMode = "cv" | "hybrid";
+
 interface UploadZoneProps {
-  onUpload: (file: File) => void;
-  onYouTubeSubmit: (url: string) => void;
+  onUpload: (file: File, mode: AnalysisMode) => void;
+  onYouTubeSubmit: (url: string, mode: AnalysisMode) => void;
   isProcessing: boolean;
   progress: number;
   processingStatus?: string;
@@ -23,6 +25,7 @@ export default function UploadZone({
   const [isDragging, setIsDragging] = useState(false);
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [urlError, setUrlError] = useState("");
+  const [mode, setMode] = useState<AnalysisMode>("hybrid");
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -30,7 +33,7 @@ export default function UploadZone({
       setIsDragging(false);
       const file = e.dataTransfer.files[0];
       if (file && file.type.startsWith("video/")) {
-        onUpload(file);
+        onUpload(file, mode);
       }
     },
     [onUpload]
@@ -39,7 +42,7 @@ export default function UploadZone({
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) onUpload(file);
+      if (file) onUpload(file, mode);
     },
     [onUpload]
   );
@@ -52,7 +55,7 @@ export default function UploadZone({
       return;
     }
     setUrlError("");
-    onYouTubeSubmit(url);
+    onYouTubeSubmit(url, mode);
   }, [youtubeUrl, onYouTubeSubmit]);
 
   if (isProcessing) {
@@ -142,6 +145,38 @@ export default function UploadZone({
         {urlError && (
           <div className="text-red-400 text-xs mt-1.5 ml-1">{urlError}</div>
         )}
+      </div>
+
+      {/* Mode Toggle */}
+      <div className="w-full max-w-xl">
+        <div className="flex items-center gap-1 p-1 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl">
+          <button
+            onClick={() => setMode("cv")}
+            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              mode === "cv"
+                ? "bg-[var(--accent)] text-black"
+                : "text-[var(--text-secondary)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
+            }`}
+          >
+            <div className="font-semibold">⚡ CV Only</div>
+            <div className={`text-[10px] mt-0.5 ${mode === "cv" ? "text-black/60" : "text-[var(--text-secondary)]"}`}>
+              Free · Fast · Offline
+            </div>
+          </button>
+          <button
+            onClick={() => setMode("hybrid")}
+            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              mode === "hybrid"
+                ? "bg-[var(--accent)] text-black"
+                : "text-[var(--text-secondary)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
+            }`}
+          >
+            <div className="font-semibold">🧠 Hybrid CV + AI</div>
+            <div className={`text-[10px] mt-0.5 ${mode === "hybrid" ? "text-black/60" : "text-[var(--text-secondary)]"}`}>
+              More accurate · ~$0.03–2/video
+            </div>
+          </button>
+        </div>
       </div>
 
       {/* Divider */}

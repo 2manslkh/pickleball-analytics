@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from loguru import logger
 
-from src.pipeline import AnalysisPipeline
+from src.pipeline import AnalysisPipeline, AnalysisMode
 from src.analysis.stats import MatchStats
 from src.downloader import is_youtube_url, download_youtube, get_video_info
 
@@ -50,12 +50,14 @@ class JobStatus(BaseModel):
 
 class YouTubeRequest(BaseModel):
     url: str
+    mode: str = "hybrid"  # "cv" or "hybrid"
 
 
 @app.post("/analyze", response_model=dict)
 async def upload_and_analyze(
     background_tasks: BackgroundTasks,
     video: UploadFile = File(...),
+    mode: str = "hybrid",
 ):
     """Upload a video and start analysis.
 
@@ -79,17 +81,20 @@ async def upload_and_analyze(
     logger.info(f"Video uploaded: {video_path} ({len(content) / 1024 / 1024:.1f}MB)")
 
     # Queue analysis
+    analysis_mode = AnalysisMode.CV_ONLY if mode == "cv" else AnalysisMode.HYBRID
+
     jobs[job_id] = {
         "status": "queued",
         "progress": 0,
         "video_path": str(video_path),
+        "mode": analysis_mode,
         "result": None,
         "error": None,
     }
 
-    background_tasks.add_task(_run_analysis, job_id, video_path)
+    background_tasks.add_task(_run_analysis, job_id, video_path, analysis_mode)
 
-    return {"job_id": job_id, "status": "queued"}
+    return {"job_id": job_id, "status": "queued", "mode": mode}
 
 
 @app.get("/status/{job_id}", response_model=JobStatus)
@@ -150,11 +155,13 @@ async def youtube_analyze(req: YouTubeRequest, background_tasks: BackgroundTasks
         "error": None,
     }
 
-    background_tasks.add_task(_download_and_analyze, job_id, req.url)
-    return {"job_id": job_id, "status": "downloading"}
+    analysis_mode = AnalysisMode.CV_ONLY if req.mode == "cv" else AnalysisMode.HYBRID
+
+    background_tasks.add_task(_download_and_analyze, job_id, req.url, analysis_mode)
+    return {"job_id": job_id, "status": "downloading", "mode": req.mode}
 
 
-def _download_and_analyze(job_id: str, url: str):
+def _download_and_analyze(job_id: str, url: str, mode: AnalysisMode = AnalysisMode.HYBRID):
     """Download YouTube video then run analysis."""
     try:
         # Get info
@@ -174,7 +181,7 @@ def _download_and_analyze(job_id: str, url: str):
         jobs[job_id]["progress"] = 15
 
         # Run analysis
-        _run_analysis(job_id, video_path)
+        _run_analysis(job_id, video_path, mode)
 
     except Exception as e:
         logger.error(f"Job {job_id} YouTube download failed: {e}")
@@ -182,13 +189,13 @@ def _download_and_analyze(job_id: str, url: str):
         jobs[job_id]["error"] = str(e)
 
 
-def _run_analysis(job_id: str, video_path: Path):
+def _run_analysis(job_id: str, video_path: Path, mode: AnalysisMode = AnalysisMode.HYBRID):
     """Run analysis in background."""
     try:
         jobs[job_id]["status"] = "processing"
         jobs[job_id]["progress"] = 10
 
-        pipeline = AnalysisPipeline(sample_rate=2)
+        pipeline = AnalysisPipeline(mode=mode, sample_rate=2)
         stats = pipeline.analyze(video_path)
 
         # Save results

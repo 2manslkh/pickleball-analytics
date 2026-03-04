@@ -1,12 +1,13 @@
-"""Main video analysis pipeline — Hybrid approach (Option C).
+"""Main video analysis pipeline — supports CV-only (Option B) and Hybrid CV+LLM (Option C).
 
 CV handles: player detection, ball detection, tracking, court mapping.
-LLM handles: shot classification, rally analysis, game events.
+LLM handles (hybrid only): shot classification, rally analysis, game events.
 """
 
 import cv2
 import json
 import numpy as np
+from enum import Enum
 from pathlib import Path
 from loguru import logger
 from tqdm import tqdm
@@ -15,53 +16,67 @@ from src.detection.player_detector import PlayerDetector
 from src.detection.ball_detector import BallDetector
 from src.tracking.tracker import MultiObjectTracker
 from src.court.court_detector import CourtDetector
-from src.analysis.llm_classifier import LLMClassifier, LLMMatchContext
-from src.analysis.stats import StatsAggregator, MatchStats, PlayerStats
+from src.analysis.shot_classifier import ShotClassifier, Shot, ShotType, ShotOutcome, Rally
+from src.analysis.stats import StatsAggregator, MatchStats
+
+
+class AnalysisMode(str, Enum):
+    CV_ONLY = "cv"      # Option B: Pure CV with heuristic shot classification
+    HYBRID = "hybrid"   # Option C: CV + LLM for shot classification
 
 
 class AnalysisPipeline:
-    """End-to-end video analysis pipeline (Hybrid: CV + LLM).
+    """End-to-end video analysis pipeline.
 
-    Phase 1 (CV): Run through video, detect players + ball, track everything,
-                  detect court, build per-frame annotations.
-    Phase 2 (LLM): Send batched annotated frames to vision LLM for
-                   shot classification and game event analysis.
-    Phase 3 (Stats): Merge CV tracking data + LLM analysis into final stats.
+    Supports two modes:
+    - CV_ONLY: YOLO detection + ByteTrack + heuristic shot classifier. Free, fast, offline.
+    - HYBRID: Same CV base + vision LLM for shot classification. More accurate, costs money.
     """
 
     def __init__(
         self,
+        mode: AnalysisMode = AnalysisMode.HYBRID,
         player_model: str = "yolov8n.pt",
         player_confidence: float = 0.5,
         ball_confidence: float = 0.3,
         sample_rate: int = 2,
+        # LLM options (hybrid mode only)
         llm_provider: str = "gemini",
         llm_model: str | None = None,
         llm_batch_seconds: float = 10.0,
         llm_frames_per_batch: int = 16,
     ):
+        self.mode = mode
         self.player_detector = PlayerDetector(player_model, player_confidence)
         self.ball_detector = BallDetector(player_model, ball_confidence)
         self.tracker = MultiObjectTracker()
         self.court_detector = CourtDetector()
-        self.llm_classifier = LLMClassifier(
-            provider=llm_provider,
-            model=llm_model,
-            frames_per_batch=llm_frames_per_batch,
-            batch_interval_seconds=llm_batch_seconds,
-        )
         self.sample_rate = sample_rate
-        self.llm_batch_seconds = llm_batch_seconds
+
+        # Mode-specific setup
+        if mode == AnalysisMode.HYBRID:
+            from src.analysis.llm_classifier import LLMClassifier
+            self.llm_classifier = LLMClassifier(
+                provider=llm_provider,
+                model=llm_model,
+                frames_per_batch=llm_frames_per_batch,
+                batch_interval_seconds=llm_batch_seconds,
+            )
+            self.llm_batch_seconds = llm_batch_seconds
+        else:
+            self.llm_classifier = None
+            self.llm_batch_seconds = 0
+
+        # CV-only mode state
+        self.shot_classifier = ShotClassifier()
+        self._last_ball_holder: int | None = None
+        self._frames_since_hit = 0
+        self._rally_active = False
+
+        logger.info(f"Pipeline initialized in {mode.value} mode")
 
     def analyze(self, video_path: str | Path) -> MatchStats:
-        """Run full analysis on a video.
-
-        Args:
-            video_path: Path to the match video file.
-
-        Returns:
-            MatchStats with all computed statistics.
-        """
+        """Run full analysis on a video."""
         video_path = Path(video_path)
         if not video_path.exists():
             raise FileNotFoundError(f"Video not found: {video_path}")
@@ -76,41 +91,191 @@ class AnalysisPipeline:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         logger.info(
-            f"Analyzing: {video_path.name} | "
+            f"Analyzing ({self.mode.value}): {video_path.name} | "
             f"{width}x{height} @ {fps:.1f}fps | "
             f"{total_frames} frames ({total_frames/fps:.1f}s)"
         )
 
-        # ── Phase 1: CV Pass ──────────────────────────────────────
-        logger.info("Phase 1: Running CV detection & tracking...")
+        if self.mode == AnalysisMode.HYBRID:
+            return self._analyze_hybrid(cap, fps, total_frames)
+        else:
+            return self._analyze_cv_only(cap, fps, total_frames)
+
+    # ── CV-Only Mode (Option B) ────────────────────────────────
+
+    def _analyze_cv_only(
+        self, cap: cv2.VideoCapture, fps: float, total_frames: int
+    ) -> MatchStats:
+        """Pure CV analysis with heuristic shot classification."""
+        stats = StatsAggregator()
+        court_mapping = None
+        frame_idx = 0
+
+        pbar = tqdm(total=total_frames, desc="Analyzing (CV)", unit="frame")
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_idx % self.sample_rate == 0:
+                # Court detection
+                if court_mapping is None or frame_idx < int(fps * 3):
+                    court_mapping = self.court_detector.detect(frame)
+                    if court_mapping and not self.shot_classifier.court_mapping:
+                        self.shot_classifier.court_mapping = court_mapping
+                        logger.info(f"Court detected at frame {frame_idx}")
+
+                # Player detection
+                raw_detections = self.player_detector.detect(frame)
+                players = self.player_detector.filter_players(raw_detections)
+
+                # Ball detection
+                ball = self.ball_detector.detect(frame)
+
+                # Update tracker
+                self.tracker.update_players(players, frame_idx)
+                self.tracker.update_ball(ball.center if ball else None, frame_idx)
+
+                # Zone tracking
+                if court_mapping:
+                    for player in self.tracker.get_active_players():
+                        if player.last_position:
+                            try:
+                                court_pos = court_mapping.image_to_court(player.last_position)
+                                zone = court_mapping.get_zone(court_pos)
+                                stats.add_position_observation(player.tracker_id, zone)
+                            except Exception:
+                                pass
+
+                # Shot detection (heuristic)
+                self._detect_shots_cv(frame_idx, stats)
+
+            frame_idx += 1
+            pbar.update(1)
+
+        pbar.close()
+        cap.release()
+
+        # Assign teams
+        self._assign_teams(court_mapping)
+
+        # End open rally
+        if self._rally_active:
+            rally = self.shot_classifier.end_rally()
+            if rally.shots:
+                stats.add_rally(rally)
+
+        # Set player teams
+        for pid, player in self.tracker.players.items():
+            if player.team is not None:
+                stats.player_teams[pid] = player.team
+
+        match_stats = stats.compute(fps=fps, total_frames=frame_idx)
+        logger.info(
+            f"CV analysis complete: {match_stats.total_rallies} rallies, "
+            f"{sum(p.total_shots for p in match_stats.players)} shots"
+        )
+        return match_stats
+
+    def _detect_shots_cv(self, frame_idx: int, stats: StatsAggregator):
+        """Detect shots using ball velocity changes (CV-only mode)."""
+        ball = self.tracker.ball
+        if len(ball.velocities) < 3:
+            return
+
+        recent_v = ball.velocities[-3:]
+        vx_sign_change = (
+            np.sign(recent_v[-1][0]) != np.sign(recent_v[-2][0])
+            and abs(recent_v[-1][0]) > 1.0
+        )
+        vy_sign_change = (
+            np.sign(recent_v[-1][1]) != np.sign(recent_v[-2][1])
+            and abs(recent_v[-1][1]) > 1.0
+        )
+        speed_spike = (
+            np.sqrt(recent_v[-1][0]**2 + recent_v[-1][1]**2) >
+            np.sqrt(recent_v[-2][0]**2 + recent_v[-2][1]**2) * 1.5
+        )
+
+        if not (vx_sign_change or vy_sign_change or speed_spike):
+            self._frames_since_hit += 1
+            # End rally after long pause
+            if self._rally_active and self._frames_since_hit > 90:
+                rally = self.shot_classifier.end_rally()
+                if rally.shots:
+                    stats.add_rally(rally)
+                self._rally_active = False
+            return
+
+        if self._frames_since_hit < 5:
+            return
+        self._frames_since_hit = 0
+
+        # Find closest player
+        ball_pos = ball.positions[-1] if ball.positions else None
+        if ball_pos is None:
+            return
+
+        closest_player = None
+        min_dist = float("inf")
+        for player in self.tracker.get_active_players():
+            if player.last_position:
+                dist = np.sqrt(
+                    (player.last_position[0] - ball_pos[0])**2 +
+                    (player.last_position[1] - ball_pos[1])**2
+                )
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_player = player
+
+        if closest_player is None or min_dist > 200:
+            return
+
+        if not self._rally_active:
+            self._rally_active = True
+            self.shot_classifier.new_rally()
+
+        shot = self.shot_classifier.classify(
+            ball_positions=ball.positions[-10:],
+            ball_velocities=ball.velocities[-10:],
+            hitting_player_id=closest_player.tracker_id,
+            hitting_player_team=closest_player.team,
+            hitting_player_pos=closest_player.last_position,
+            frame_idx=frame_idx,
+        )
+
+        logger.debug(f"Shot: {shot.shot_type.value} by P{shot.player_id} @ frame {frame_idx}")
+
+    # ── Hybrid Mode (Option C) ─────────────────────────────────
+
+    def _analyze_hybrid(
+        self, cap: cv2.VideoCapture, fps: float, total_frames: int
+    ) -> MatchStats:
+        """Hybrid CV + LLM analysis."""
+        from src.analysis.llm_classifier import LLMMatchContext
+
+        # Phase 1: CV pass
+        logger.info("Phase 1: CV detection & tracking...")
         cv_data = self._run_cv_pass(cap, fps, total_frames)
         cap.release()
 
-        # ── Phase 2: LLM Analysis ────────────────────────────────
-        logger.info("Phase 2: Sending batches to vision LLM...")
+        # Phase 2: LLM pass
+        logger.info("Phase 2: Vision LLM analysis...")
         llm_results = self._run_llm_pass(cv_data, fps)
 
-        # ── Phase 3: Merge & Compute Stats ────────────────────────
-        logger.info("Phase 3: Computing final statistics...")
+        # Phase 3: Merge
+        logger.info("Phase 3: Computing statistics...")
         stats = self._merge_and_compute(cv_data, llm_results, fps, total_frames)
 
         logger.info(
-            f"Analysis complete: {stats.total_rallies} rallies, "
-            f"{sum(p.total_shots for p in stats.players)} total shots"
+            f"Hybrid analysis complete: {stats.total_rallies} rallies, "
+            f"{sum(p.total_shots for p in stats.players)} shots"
         )
-
         return stats
 
     def _run_cv_pass(self, cap: cv2.VideoCapture, fps: float, total_frames: int) -> dict:
-        """Phase 1: Run through video with CV models.
-
-        Returns dict with:
-            - frames: sampled frames for LLM
-            - frame_indices: which frames were sampled
-            - annotations: per-frame player/ball data
-            - court_mapping: detected court mapping
-            - zone_observations: {player_id: [zones]}
-        """
+        """Phase 1: CV detection and tracking."""
         frames_for_llm = []
         frame_indices_for_llm = []
         annotations_for_llm = []
@@ -118,7 +283,6 @@ class AnalysisPipeline:
 
         court_mapping = None
         batch_interval_frames = int(self.llm_batch_seconds * fps)
-        # Sample frames for LLM at regular intervals
         llm_sample_interval = max(1, batch_interval_frames // self.llm_classifier.frames_per_batch)
 
         frame_idx = 0
@@ -130,25 +294,16 @@ class AnalysisPipeline:
                 break
 
             if frame_idx % self.sample_rate == 0:
-                # Court detection (first 3 seconds, then cache)
                 if court_mapping is None or frame_idx < int(fps * 3):
                     court_mapping = self.court_detector.detect(frame)
 
-                # Player detection
                 raw_detections = self.player_detector.detect(frame)
                 players = self.player_detector.filter_players(raw_detections)
-
-                # Ball detection
                 ball = self.ball_detector.detect(frame)
 
-                # Update tracker
                 self.tracker.update_players(players, frame_idx)
-                self.tracker.update_ball(
-                    ball.center if ball else None,
-                    frame_idx,
-                )
+                self.tracker.update_ball(ball.center if ball else None, frame_idx)
 
-                # Zone tracking
                 if court_mapping:
                     for player in self.tracker.get_active_players():
                         if player.last_position:
@@ -161,7 +316,6 @@ class AnalysisPipeline:
                             except Exception:
                                 pass
 
-                # Sample frames for LLM
                 if frame_idx % llm_sample_interval == 0:
                     annotation = {
                         "players": [
@@ -187,15 +341,7 @@ class AnalysisPipeline:
 
         pbar.close()
 
-        # Assign teams
-        if court_mapping:
-            try:
-                midline_img = court_mapping.court_to_image((10, 22))
-                self.tracker.assign_teams(midline_img[1])
-            except Exception:
-                self.tracker.assign_teams()
-        else:
-            self.tracker.assign_teams()
+        self._assign_teams(court_mapping)
 
         return {
             "frames": frames_for_llm,
@@ -206,8 +352,8 @@ class AnalysisPipeline:
             "tracker": self.tracker,
         }
 
-    def _run_llm_pass(self, cv_data: dict, fps: float) -> list[LLMMatchContext]:
-        """Phase 2: Send frame batches to vision LLM for analysis."""
+    def _run_llm_pass(self, cv_data: dict, fps: float) -> list:
+        """Phase 2: Send frame batches to vision LLM."""
         frames = cv_data["frames"]
         indices = cv_data["frame_indices"]
         annotations = cv_data["annotations"]
@@ -216,10 +362,8 @@ class AnalysisPipeline:
             logger.warning("No frames collected for LLM analysis")
             return []
 
-        # Batch frames
         batch_size = self.llm_classifier.frames_per_batch
         results = []
-
         total_batches = (len(frames) + batch_size - 1) // batch_size
         pbar = tqdm(total=total_batches, desc="Phase 2: LLM", unit="batch")
 
@@ -238,38 +382,26 @@ class AnalysisPipeline:
         return results
 
     def _merge_and_compute(
-        self,
-        cv_data: dict,
-        llm_results: list[LLMMatchContext],
-        fps: float,
-        total_frames: int,
+        self, cv_data: dict, llm_results: list, fps: float, total_frames: int,
     ) -> MatchStats:
-        """Phase 3: Merge CV tracking + LLM analysis into final stats."""
+        """Phase 3: Merge CV tracking + LLM analysis."""
         stats = StatsAggregator()
         tracker = cv_data["tracker"]
-
-        # Map LLM player positions to tracker IDs
         position_to_player = self._map_positions_to_players(tracker)
-
-        # Process LLM rally data
-        from src.analysis.shot_classifier import Shot, ShotType, ShotOutcome, Rally
 
         for context in llm_results:
             for rally_analysis in context.events:
                 shots = []
                 for llm_shot in rally_analysis.shots:
-                    # Map LLM shot type to enum
                     try:
                         shot_type = ShotType(llm_shot.shot_type)
                     except ValueError:
                         shot_type = ShotType.UNKNOWN
-
                     try:
                         outcome = ShotOutcome(llm_shot.outcome)
                     except ValueError:
                         outcome = ShotOutcome.UNKNOWN
 
-                    # Find player ID from position
                     player_id = position_to_player.get(llm_shot.player_position, -1)
                     team = None
                     if player_id >= 0 and player_id in tracker.players:
@@ -288,7 +420,6 @@ class AnalysisPipeline:
                     )
                     shots.append(shot)
 
-                # Map point winner
                 winner_team = None
                 if rally_analysis.point_winner == "near_team":
                     winner_team = 0
@@ -302,20 +433,16 @@ class AnalysisPipeline:
                 )
                 stats.add_rally(rally)
 
-        # Add zone observations from CV
         for pid, zones in cv_data["zone_observations"].items():
             for zone in zones:
                 stats.add_position_observation(pid, zone)
 
-        # Set player teams from tracker
         for pid, player in tracker.players.items():
             if player.team is not None:
                 stats.player_teams[pid] = player.team
 
-        # Compute final stats
         match_stats = stats.compute(fps=fps, total_frames=total_frames)
 
-        # Add LLM observations as metadata
         all_observations = []
         for context in llm_results:
             all_observations.extend(context.observations)
@@ -324,23 +451,29 @@ class AnalysisPipeline:
 
         return match_stats
 
-    def _map_positions_to_players(self, tracker: MultiObjectTracker) -> dict[str, int]:
-        """Map LLM position names to tracker player IDs.
+    # ── Shared Helpers ──────────────────────────────────────────
 
-        Uses average position of each player to assign:
-        near_left, near_right, far_left, far_right
-        """
+    def _assign_teams(self, court_mapping):
+        """Assign players to teams based on court position."""
+        if court_mapping:
+            try:
+                midline_img = court_mapping.court_to_image((10, 22))
+                self.tracker.assign_teams(midline_img[1])
+            except Exception:
+                self.tracker.assign_teams()
+        else:
+            self.tracker.assign_teams()
+
+    def _map_positions_to_players(self, tracker: MultiObjectTracker) -> dict[str, int]:
+        """Map LLM position names to tracker player IDs."""
         active = tracker.get_active_players(max_gap=9999)
         if not active:
             return {}
 
         mapping = {}
-
-        # Split by team
         near = [p for p in active if p.team == 0]
         far = [p for p in active if p.team == 1]
 
-        # Sort each team by average X position (left vs right)
         def avg_x(player):
             if player.positions:
                 return np.mean([pos[0] for pos in player.positions[-100:]])

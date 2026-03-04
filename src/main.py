@@ -5,27 +5,29 @@ import typer
 from pathlib import Path
 from loguru import logger
 
-from src.pipeline import AnalysisPipeline
+from src.pipeline import AnalysisPipeline, AnalysisMode
 from src.downloader import is_youtube_url, download_youtube
 
-app = typer.Typer(help="🏓 Pickleball Match Analytics — Hybrid CV + LLM")
+app = typer.Typer(help="🏓 Pickleball Match Analytics — CV or Hybrid CV+LLM")
 
 
 @app.command()
 def analyze(
     video: str = typer.Argument(..., help="Path to match video file or YouTube URL"),
     output: Path = typer.Option(None, "--output", "-o", help="Output JSON path"),
+    mode: str = typer.Option("hybrid", "--mode", help="Analysis mode: 'cv' (free/offline) or 'hybrid' (CV+LLM)"),
     model: str = typer.Option("yolov8n.pt", "--model", "-m", help="YOLO model path"),
     confidence: float = typer.Option(0.5, "--confidence", "-c", help="Detection confidence"),
     sample_rate: int = typer.Option(2, "--sample-rate", "-s", help="Process every Nth frame"),
-    llm: str = typer.Option("gemini", "--llm", help="LLM provider: gemini or openai"),
+    llm: str = typer.Option("gemini", "--llm", help="LLM provider: gemini or openai (hybrid mode only)"),
     llm_model: str = typer.Option(None, "--llm-model", help="LLM model name override"),
     batch_seconds: float = typer.Option(10.0, "--batch-sec", help="Seconds per LLM batch"),
 ):
     """Analyze a pickleball match video and generate stats.
 
-    Uses YOLO for player/ball detection, ByteTrack for tracking,
-    and a vision LLM (Gemini/GPT-4o) for shot classification.
+    Two modes:
+      --mode cv      Pure computer vision. Free, fast, works offline. Uses heuristic shot classification.
+      --mode hybrid  CV + vision LLM (Gemini/GPT-4o). More accurate shot classification. Costs ~$0.03-2/video.
     """
 
     # Handle YouTube URLs
@@ -35,9 +37,11 @@ def analyze(
     else:
         video_path = Path(video)
 
-    logger.info(f"Starting hybrid analysis of {video_path}")
+    analysis_mode = AnalysisMode.CV_ONLY if mode == "cv" else AnalysisMode.HYBRID
+    logger.info(f"Starting {analysis_mode.value} analysis of {video_path}")
 
     pipeline = AnalysisPipeline(
+        mode=analysis_mode,
         player_model=model,
         player_confidence=confidence,
         sample_rate=sample_rate,
@@ -66,7 +70,9 @@ def analyze(
 def _print_summary(stats):
     """Print a human-readable summary to console."""
     print("\n" + "=" * 60)
-    print("🏓 MATCH ANALYSIS REPORT (Hybrid CV + LLM)")
+    has_llm = hasattr(stats, 'llm_observations') and stats.llm_observations
+    mode_label = "Hybrid CV + LLM" if has_llm else "CV Only"
+    print(f"🏓 MATCH ANALYSIS REPORT ({mode_label})")
     print("=" * 60)
     print(f"Duration: {stats.duration_seconds:.0f}s")
     print(f"Total Rallies: {stats.total_rallies}")
