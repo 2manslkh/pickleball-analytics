@@ -75,6 +75,9 @@ class MatchStats(BaseModel):
     # Momentum
     score_progression: list[dict] = []  # [{point: N, team0: X, team1: Y}]
 
+    # LLM insights
+    llm_observations: list[str] = []  # High-level observations from vision LLM
+
 
 class StatsAggregator:
     """Aggregates shots and rallies into match statistics."""

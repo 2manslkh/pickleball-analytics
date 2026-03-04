@@ -21,12 +21,25 @@ AI-powered video analysis for pickleball doubles matches. Upload a match video, 
 | **Rally** | Avg rally length, point-ending shot types |
 | **Strategy** | 3rd shot selection, transition success rate |
 
+## Architecture — Hybrid (CV + LLM)
+
+**Phase 1 (CV):** YOLOv8 detects players + ball → ByteTrack maintains persistent IDs → Court homography maps positions to real-world coordinates.
+
+**Phase 2 (LLM):** Annotated frame batches are sent to a vision LLM (Gemini 2.5 Pro / GPT-4o) for shot classification, rally analysis, and game event detection.
+
+**Phase 3 (Stats):** CV tracking data + LLM analysis are merged into final statistics.
+
+### Why Hybrid?
+- CV is great at **detection and tracking** (precise, fast, deterministic)
+- LLMs are great at **understanding game context** (shot intent, rally dynamics, strategy)
+- Heuristic classifiers are brittle; LLMs handle edge cases naturally
+
 ## Tech Stack
 
 - **Detection:** YOLOv8 (players + ball)
 - **Tracking:** ByteTrack (multi-object tracking)
 - **Court:** OpenCV homography + line detection
-- **Classification:** Custom shot classifier
+- **Shot Analysis:** Vision LLM (Gemini 2.5 Pro / GPT-4o)
 - **Backend:** FastAPI
 - **Frontend:** Next.js
 - **Processing:** OpenCV + ffmpeg
@@ -37,8 +50,11 @@ AI-powered video analysis for pickleball doubles matches. Upload a match video, 
 # Install dependencies
 pip install -r requirements.txt
 
-# Run analysis on a video
+# Run analysis on a video (default: Gemini)
 python -m src.main analyze --video path/to/match.mp4
+
+# Use GPT-4o instead
+python -m src.main analyze --video path/to/match.mp4 --llm openai
 
 # Start the API server
 python -m src.api.server

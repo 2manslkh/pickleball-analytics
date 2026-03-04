@@ -7,7 +7,7 @@ from loguru import logger
 
 from src.pipeline import AnalysisPipeline
 
-app = typer.Typer(help="🏓 Pickleball Match Analytics")
+app = typer.Typer(help="🏓 Pickleball Match Analytics — Hybrid CV + LLM")
 
 
 @app.command()
@@ -17,15 +17,25 @@ def analyze(
     model: str = typer.Option("yolov8n.pt", "--model", "-m", help="YOLO model path"),
     confidence: float = typer.Option(0.5, "--confidence", "-c", help="Detection confidence"),
     sample_rate: int = typer.Option(2, "--sample-rate", "-s", help="Process every Nth frame"),
+    llm: str = typer.Option("gemini", "--llm", help="LLM provider: gemini or openai"),
+    llm_model: str = typer.Option(None, "--llm-model", help="LLM model name override"),
+    batch_seconds: float = typer.Option(10.0, "--batch-sec", help="Seconds per LLM batch"),
 ):
-    """Analyze a pickleball match video and generate stats."""
+    """Analyze a pickleball match video and generate stats.
 
-    logger.info(f"Starting analysis of {video}")
+    Uses YOLO for player/ball detection, ByteTrack for tracking,
+    and a vision LLM (Gemini/GPT-4o) for shot classification.
+    """
+
+    logger.info(f"Starting hybrid analysis of {video}")
 
     pipeline = AnalysisPipeline(
         player_model=model,
         player_confidence=confidence,
         sample_rate=sample_rate,
+        llm_provider=llm,
+        llm_model=llm_model,
+        llm_batch_seconds=batch_seconds,
     )
 
     stats = pipeline.analyze(video)
@@ -48,7 +58,7 @@ def analyze(
 def _print_summary(stats):
     """Print a human-readable summary to console."""
     print("\n" + "=" * 60)
-    print("🏓 MATCH ANALYSIS REPORT")
+    print("🏓 MATCH ANALYSIS REPORT (Hybrid CV + LLM)")
     print("=" * 60)
     print(f"Duration: {stats.duration_seconds:.0f}s")
     print(f"Total Rallies: {stats.total_rallies}")
@@ -60,14 +70,16 @@ def _print_summary(stats):
         print(f"  {shot_type:<12} {count:>4}")
 
     for player in stats.players:
+        team_label = "Near" if player.team == 0 else "Far" if player.team is not None else "?"
         print(f"\n{'─' * 60}")
-        print(f"👤 Player {player.player_id} (Team {'Near' if player.team == 0 else 'Far' if player.team is not None else '?'})")
+        print(f"👤 Player {player.player_id} (Team {team_label})")
         print(f"  Total Shots: {player.total_shots}")
         print(f"  Dinks: {player.dinks}  (accuracy: {player.dink_accuracy:.0f}%)")
         print(f"  Drives: {player.drives}")
         print(f"  Drops: {player.drops}  (3rd shot attempts: {player.third_shot_drop_attempts})")
         print(f"  Lobs: {player.lobs}")
         print(f"  Volleys: {player.volleys}")
+        print(f"  Overheads: {player.overheads}")
         print(f"  Serves: {player.serves}")
         print(f"  Unforced Errors: {player.unforced_errors}")
         print(f"  Winners: {player.winners}")
@@ -79,7 +91,15 @@ def _print_summary(stats):
         print(f"\n{'─' * 60}")
         print("🏆 Team Scores:")
         for team in stats.teams:
-            print(f"  Team {team.team_id}: {team.points_won} pts won, {team.points_lost} lost")
+            label = "Near" if team.team_id == 0 else "Far"
+            print(f"  Team {label}: {team.points_won} pts won, {team.points_lost} lost")
+
+    # LLM observations
+    if hasattr(stats, 'llm_observations') and stats.llm_observations:
+        print(f"\n{'─' * 60}")
+        print("🧠 AI Observations:")
+        for obs in stats.llm_observations:
+            print(f"  • {obs}")
 
     print("\n" + "=" * 60)
 
