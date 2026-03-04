@@ -17,7 +17,7 @@ app = modal.App("pickleball-analytics")
 # Container image with all dependencies
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "libgl1-mesa-glx", "libglib2.0-0")
+    .apt_install("ffmpeg", "libgl1-mesa-glx", "libglib2.0-0", "nodejs")
     .pip_install(
         # CV
         "ultralytics>=8.1.0",
