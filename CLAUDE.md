@@ -1,5 +1,17 @@
 # Pickleball Analytics — Agent Guide
 
+## Working on Tasks
+
+If asked to "work on the next task" or similar:
+1. Read `.claude/tasks/TRACKER.md` — find the first task with status `ready`
+2. Change its status to `in_progress` and save the file
+3. Read the **skill file** and **sprint file** referenced in the task
+4. Execute the task following acceptance criteria in the sprint file
+5. When done, mark it `done` in TRACKER.md, commit with message: `feat: [Task X.X] description`
+6. Move to the next `ready` task if asked to continue
+
+All Sprint 1 tasks are independent — they can run in parallel.
+
 ## What This Is
 AI-powered pickleball match video analysis. Upload a video (or paste YouTube URL) → CV detects players/ball/court → AI classifies shots → stats dashboard.
 
