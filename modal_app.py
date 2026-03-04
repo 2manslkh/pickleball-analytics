@@ -359,6 +359,7 @@ def download_video(url: str) -> dict:
         "--merge-output-format", "mp4",
         "--output", output_template,
         "--no-playlist",
+        "--js-runtimes", "nodejs",
         url,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
