@@ -8,11 +8,7 @@ from loguru import logger
 from src.pipeline import AnalysisPipeline, AnalysisMode
 from src.downloader import is_youtube_url, download_youtube
 
-app = typer.Typer(help="🏓 Pickleball Match Analytics — CV or Hybrid CV+LLM")
-
-
-@app.command()
-def analyze(
+def main(
     video: str = typer.Argument(..., help="Path to match video file or YouTube URL"),
     output: Path = typer.Option(None, "--output", "-o", help="Output JSON path"),
     mode: str = typer.Option("hybrid", "--mode", help="Analysis mode: 'cv' (free/offline) or 'hybrid' (CV+LLM)"),
@@ -119,4 +115,4 @@ def _print_summary(stats):
 
 
 if __name__ == "__main__":
-    app()
+    typer.run(main)
