@@ -76,6 +76,39 @@ export default function Home() {
   const [currentTime, setCurrentTime] = useState(0);
   const [useDemo, setUseDemo] = useState(false);
 
+  const pollJob = useCallback(async (jobId: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`/api/status/${jobId}`);
+        const status = await statusRes.json();
+
+        setProgress(status.progress);
+
+        // If YouTube download provides video URL, use it for playback
+        if (status.video_url && !videoUrl) {
+          setVideoUrl(status.video_url);
+        }
+
+        if (status.status === "complete") {
+          clearInterval(pollInterval);
+          const resultsRes = await fetch(`/api/results/${jobId}`);
+          const results = await resultsRes.json();
+          setStats(results);
+          setIsProcessing(false);
+        } else if (status.status === "error") {
+          clearInterval(pollInterval);
+          console.error("Analysis failed:", status.error);
+          setIsProcessing(false);
+        }
+      } catch (err) {
+        clearInterval(pollInterval);
+        console.error("Polling error:", err);
+        setStats(DEMO_STATS);
+        setIsProcessing(false);
+      }
+    }, 2000);
+  }, [videoUrl]);
+
   const handleUpload = useCallback(async (file: File) => {
     setVideoFile(file);
     setVideoUrl(URL.createObjectURL(file));
@@ -83,7 +116,6 @@ export default function Home() {
     setProgress(0);
 
     try {
-      // Upload to backend
       const formData = new FormData();
       formData.append("video", file);
 
@@ -93,35 +125,36 @@ export default function Home() {
       });
 
       if (!uploadRes.ok) throw new Error("Upload failed");
-
       const { job_id } = await uploadRes.json();
-
-      // Poll for results
-      const pollInterval = setInterval(async () => {
-        const statusRes = await fetch(`/api/status/${job_id}`);
-        const status = await statusRes.json();
-
-        setProgress(status.progress);
-
-        if (status.status === "complete") {
-          clearInterval(pollInterval);
-          const resultsRes = await fetch(`/api/results/${job_id}`);
-          const results = await resultsRes.json();
-          setStats(results);
-          setIsProcessing(false);
-        } else if (status.status === "error") {
-          clearInterval(pollInterval);
-          console.error("Analysis failed:", status.error);
-          setIsProcessing(false);
-        }
-      }, 2000);
+      pollJob(job_id);
     } catch (err) {
       console.error("Upload error:", err);
-      // Fallback: load demo stats for UI testing
       setStats(DEMO_STATS);
       setIsProcessing(false);
     }
-  }, []);
+  }, [pollJob]);
+
+  const handleYouTubeSubmit = useCallback(async (url: string) => {
+    setIsProcessing(true);
+    setProgress(0);
+    setVideoUrl(null);
+
+    try {
+      const res = await fetch("/api/youtube/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+
+      if (!res.ok) throw new Error("YouTube submission failed");
+      const { job_id } = await res.json();
+      pollJob(job_id);
+    } catch (err) {
+      console.error("YouTube error:", err);
+      setStats(DEMO_STATS);
+      setIsProcessing(false);
+    }
+  }, [pollJob]);
 
   const handleLoadDemo = useCallback(() => {
     setStats(DEMO_STATS);
@@ -229,9 +262,9 @@ export default function Home() {
 
       {/* Main content */}
       {!stats && !isProcessing ? (
-        <UploadZone onUpload={handleUpload} isProcessing={false} progress={0} />
+        <UploadZone onUpload={handleUpload} onYouTubeSubmit={handleYouTubeSubmit} isProcessing={false} progress={0} />
       ) : isProcessing ? (
-        <UploadZone onUpload={() => {}} isProcessing={true} progress={progress} />
+        <UploadZone onUpload={() => {}} onYouTubeSubmit={() => {}} isProcessing={true} progress={progress} />
       ) : stats ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Video + Timeline (2/3 width) */}

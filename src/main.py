@@ -6,13 +6,14 @@ from pathlib import Path
 from loguru import logger
 
 from src.pipeline import AnalysisPipeline
+from src.downloader import is_youtube_url, download_youtube
 
 app = typer.Typer(help="🏓 Pickleball Match Analytics — Hybrid CV + LLM")
 
 
 @app.command()
 def analyze(
-    video: Path = typer.Argument(..., help="Path to match video file"),
+    video: str = typer.Argument(..., help="Path to match video file or YouTube URL"),
     output: Path = typer.Option(None, "--output", "-o", help="Output JSON path"),
     model: str = typer.Option("yolov8n.pt", "--model", "-m", help="YOLO model path"),
     confidence: float = typer.Option(0.5, "--confidence", "-c", help="Detection confidence"),
@@ -27,7 +28,14 @@ def analyze(
     and a vision LLM (Gemini/GPT-4o) for shot classification.
     """
 
-    logger.info(f"Starting hybrid analysis of {video}")
+    # Handle YouTube URLs
+    if is_youtube_url(video):
+        logger.info(f"Downloading YouTube video: {video}")
+        video_path = download_youtube(video)
+    else:
+        video_path = Path(video)
+
+    logger.info(f"Starting hybrid analysis of {video_path}")
 
     pipeline = AnalysisPipeline(
         player_model=model,
@@ -38,11 +46,11 @@ def analyze(
         llm_batch_seconds=batch_seconds,
     )
 
-    stats = pipeline.analyze(video)
+    stats = pipeline.analyze(video_path)
 
     # Default output path
     if output is None:
-        output = Path("data/outputs") / f"{video.stem}_stats.json"
+        output = Path("data/outputs") / f"{video_path.stem}_stats.json"
         output.parent.mkdir(parents=True, exist_ok=True)
 
     # Write results
